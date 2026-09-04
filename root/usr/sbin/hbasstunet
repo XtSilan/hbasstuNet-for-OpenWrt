@@ -1,61 +1,240 @@
 #!/bin/sh
 set -u
-BASE=/var/run/hbasstunet
-COOKIE=$BASE/cookie
-ISP_FILE=$BASE/isp
-CSRF_FILE=$BASE/csrf
+
+SECTION=main
+[ "$#" -eq 0 ] || SECTION="$1"
+case "$SECTION" in
+    *[!A-Za-z0-9_]*|'')
+        logger -t hbasstunet -p daemon.err -- "无效的认证实例名称"
+        exit 1
+        ;;
+esac
+
+TAG="hbasstunet.$SECTION"
+BASE="/var/run/hbasstunet/$SECTION"
+COOKIE="$BASE/cookie"
+CSRF_FILE="$BASE/csrf"
+ISP_FILE="$BASE/isp"
+SESSION_FILE="$BASE/session_id"
+STATUS_FILE="$BASE/status"
+IDENTITY_LOCK=
 ACTIVE=0
-get(){ uci -q get hbasstunet.main.$1 2>/dev/null || true; }
-log(){ logger -t hbasstunet -- "$*"; }
-err(){ logger -t hbasstunet -p daemon.err -- "$*"; }
-portal(){ get portal_url | sed 's#/$##'; }
-network_info(){
-  local name json
-  name=$(get interface); [ -n "$name" ] || name=wan
-  json=$(ubus call network.interface.$name status 2>/dev/null || true)
-  DEVICE=$(printf %s "$json" | jsonfilter -e '@.l3_device' 2>/dev/null || true)
-  IP=$(printf %s "$json" | jsonfilter -e '@.ipv4-address[0].address' 2>/dev/null || true)
-  [ -n "$DEVICE" ] && [ -n "$IP" ] || return 1
-  MAC=$(cat /sys/class/net/$DEVICE/address 2>/dev/null || true)
-  [ -n "$MAC" ]
+OWNED=0
+DEVICE=
+IP=
+MAC=
+RESPONSE_SESSION=
+
+get() { uci -q get "hbasstunet.$SECTION.$1" 2>/dev/null || true; }
+log() { logger -t "$TAG" -- "$*"; }
+err() { logger -t "$TAG" -p daemon.err -- "$*"; }
+portal() { get portal_url | sed 's#/$##'; }
+normalize_mac() { printf %s "$1" | tr 'A-Z' 'a-z' | tr -d ':-'; }
+normalize_user() { printf %s "$1" | tr 'A-Z' 'a-z'; }
+
+write_status() {
+    printf 'state=%s\ninterface=%s\ndevice=%s\nipv4=%s\nmac=%s\n' \
+        "$1" "$(get interface)" "$DEVICE" "$IP" "$MAC" > "$STATUS_FILE"
+    chmod 600 "$STATUS_FILE"
 }
-logout(){
-  [ -s "$COOKIE" ] || return 0
-  local isp csrf; isp=$(cat $ISP_FILE 2>/dev/null || true); csrf=$(cat $CSRF_FILE 2>/dev/null || true)
-  curl -sS --interface "$IP" --connect-timeout 5 --max-time 10 -b $COOKIE -H "X-CSRF-Token: $csrf" -H 'X-Requested-With: XMLHttpRequest' -o /dev/null "$(portal)/api/account/logout?nasId=$(get nas_id)&userIpv4=$IP&userMac=$MAC&username=$(get username)&isp=$isp" || true
-  ACTIVE=0
+
+reset_local() {
+    ACTIVE=0
+    OWNED=0
+    rm -f "$COOKIE" "$CSRF_FILE" "$ISP_FILE" "$SESSION_FILE" "$BASE/csrf.json"
+    write_status "$1"
 }
-cleanup(){ logout; rm -rf $BASE; }; trap cleanup EXIT INT TERM
-authenticate(){
-  local url csrf body code auth online dial msg isp; url=$(portal); mkdir -p $BASE; chmod 700 $BASE
-  rm -f $COOKIE $BASE/csrf.json
-  curl -sS --interface "$IP" --connect-timeout 5 --max-time 10 -c $COOKIE -o $BASE/csrf.json "$url/api/csrf-token" || { err '获取 CSRF token 失败'; return 1; }
-  csrf=$(jsonfilter -i $BASE/csrf.json -e '@.csrf_token' 2>/dev/null || true); [ -n "$csrf" ] || { err 'CSRF token 为空'; return 1; }; printf %s "$csrf" > "$CSRF_FILE"; chmod 600 "$CSRF_FILE"
-  body=$(curl -sS --interface "$IP" --connect-timeout 5 --max-time 15 -b $COOKIE -H "X-CSRF-Token: $csrf" -H 'X-Requested-With: XMLHttpRequest' -H 'Content-Type: application/x-www-form-urlencoded' --data-urlencode "nasId=$(get nas_id)" --data-urlencode "userIpv4=$IP" --data-urlencode "userMac=$MAC" --data-urlencode "username=$(get username)" --data-urlencode "password=$(get password)" "$url/api/account/check" || true)
-  code=$(printf %s "$body" | jsonfilter -e '@.code' 2>/dev/null || true); [ "$code" = 0 ] || { err '账号检查失败'; logout; return 1; }
-  body=$(curl -sS --interface "$IP" --connect-timeout 5 --max-time 20 -b $COOKIE -H "X-CSRF-Token: $csrf" -H 'X-Requested-With: XMLHttpRequest' -H 'Content-Type: application/x-www-form-urlencoded' --data-urlencode "nasId=$(get nas_id)" --data-urlencode "userIpv4=$IP" --data-urlencode "userMac=$MAC" --data-urlencode "username=$(get username)" --data-urlencode "password=$(get password)" "$url/api/account/login" || true)
-  code=$(printf %s "$body" | jsonfilter -e '@.code' 2>/dev/null || true); auth=$(printf %s "$body" | jsonfilter -e '@.authCode' 2>/dev/null || true); online=$(printf %s "$body" | jsonfilter -e '@.online.Username' 2>/dev/null || true); dial=$(printf %s "$body" | jsonfilter -e '@.dialCode' 2>/dev/null || true)
-  if [ "$code" != 0 ] || [ -z "$online" ] || ! printf %s "$auth" | grep -qi '^ok:' || printf %s "$dial" | grep -q '^E'; then
-    msg=$(printf %s "$body" | jsonfilter -e '@.dialMsg' 2>/dev/null || true); [ -n "$msg" ] || msg=$(printf %s "$body" | jsonfilter -e '@.authMsg' 2>/dev/null || true); err "登录失败: ${msg:-认证未成功}"; logout; return 1
-  fi
-  isp=$(printf %s "$body" | jsonfilter -e '@.isp' 2>/dev/null || true); printf %s "$isp" > $ISP_FILE; chmod 600 $ISP_FILE; ACTIVE=1; log "登录成功 account=$online isp=${isp:-unknown} ip=$IP"
+
+release_identity_lock() {
+    [ -n "$IDENTITY_LOCK" ] || return 0
+    rm -f "$IDENTITY_LOCK/pid"
+    rmdir "$IDENTITY_LOCK" 2>/dev/null || true
+    IDENTITY_LOCK=
 }
-session_ok(){
-  [ $ACTIVE -eq 1 ] || return 1
-  local body code online dial
-  body=$(curl -sS --interface "$IP" --connect-timeout 5 --max-time 10 -b $COOKIE "$(portal)/api/account/status?nasId=$(get nas_id)&userIpv4=$IP&userMac=$MAC&username=$(get username)&isp=$(cat $ISP_FILE 2>/dev/null || true)" || true)
-  code=$(printf %s "$body" | jsonfilter -e '@.code' 2>/dev/null || true); online=$(printf %s "$body" | jsonfilter -e '@.online.Username' 2>/dev/null || true); dial=$(printf %s "$body" | jsonfilter -e '@.dialCode' 2>/dev/null || true)
-  [ "$code" = 0 ] && [ -n "$online" ] && ! printf %s "$dial" | grep -q '^E'
-}
-while :; do
-  if network_info; then
-    if [ $ACTIVE -eq 1 ]; then
-      session_ok || { log '认证已失效，准备重新登录'; logout; authenticate || true; }
-    else
-      authenticate || true
+
+claim_identity() {
+    local key lock_root next_lock owner
+    key=$(normalize_mac "$MAC")
+    [ -n "$key" ] || return 1
+    lock_root=/var/run/hbasstunet/identities
+    next_lock="$lock_root/$key"
+    [ "$IDENTITY_LOCK" = "$next_lock" ] && return 0
+    release_identity_lock
+    mkdir -p "$lock_root"
+    if ! mkdir "$next_lock" 2>/dev/null; then
+        owner=$(cat "$next_lock/pid" 2>/dev/null || true)
+        if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+            rm -f "$next_lock/pid"
+            rmdir "$next_lock" 2>/dev/null || return 1
+            mkdir "$next_lock" 2>/dev/null || return 1
+        else
+            err "网络身份已被另一认证实例占用 mac=$MAC"
+            return 1
+        fi
     fi
-  else
-    log '等待所选校园网接口获取 IPv4 地址'
-  fi
-  sleep 30
+    printf '%s\n' "$$" > "$next_lock/pid"
+    IDENTITY_LOCK=$next_lock
+}
+
+network_info() {
+    local name json next_device next_ip next_mac
+    name=$(get interface)
+    [ -n "$name" ] || name=wan
+    json=$(ubus call "network.interface.$name" status 2>/dev/null || true)
+    next_device=$(printf %s "$json" | jsonfilter -e '@.l3_device' 2>/dev/null || true)
+    next_ip=$(printf %s "$json" | jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null || true)
+    [ -n "$next_device" ] && [ -n "$next_ip" ] || return 1
+    next_mac=$(cat "/sys/class/net/$next_device/address" 2>/dev/null || true)
+    [ -n "$next_mac" ] || return 1
+
+    if [ "$OWNED" -eq 1 ] && { [ "$DEVICE" != "$next_device" ] || [ "$IP" != "$next_ip" ] || [ "$(normalize_mac "$MAC")" != "$(normalize_mac "$next_mac")" ]; }; then
+        log '接口身份已变化，丢弃旧会话状态并重新认证'
+        DEVICE=$next_device
+        IP=$next_ip
+        MAC=$next_mac
+        reset_local waiting
+    else
+        DEVICE=$next_device
+        IP=$next_ip
+        MAC=$next_mac
+    fi
+}
+
+curl_bound() {
+    local timeout="$1"
+    shift
+    # Bind the Portal socket to this account's current source IPv4.  The
+    # device/MAC is still tracked separately for identity validation.
+    curl -sS --interface "$IP" --connect-timeout 5 --max-time "$timeout" "$@"
+}
+
+identity_matches() {
+    local body="$1" expected_user actual_user actual_ip actual_mac actual_session
+    expected_user=$(get username)
+    actual_user=$(printf %s "$body" | jsonfilter -e '@.online.Username' 2>/dev/null || true)
+    actual_ip=$(printf %s "$body" | jsonfilter -e '@.online.UserIpv4' 2>/dev/null || true)
+    actual_mac=$(printf %s "$body" | jsonfilter -e '@.online.UserMac' 2>/dev/null || true)
+    actual_session=$(printf %s "$body" | jsonfilter -e '@.online.SessionId' 2>/dev/null || true)
+    [ -n "$actual_user" ] && [ "$(normalize_user "$actual_user")" = "$(normalize_user "$expected_user")" ] || return 1
+    [ "$actual_ip" = "$IP" ] || return 1
+    [ -n "$actual_mac" ] && [ "$(normalize_mac "$actual_mac")" = "$(normalize_mac "$MAC")" ] || return 1
+    [ -n "$actual_session" ] || return 1
+    RESPONSE_SESSION=$actual_session
+}
+
+logout() {
+    local isp csrf
+    if [ "$OWNED" -ne 1 ] || [ ! -s "$COOKIE" ]; then
+        reset_local stopped
+        return 0
+    fi
+    isp=$(cat "$ISP_FILE" 2>/dev/null || true)
+    csrf=$(cat "$CSRF_FILE" 2>/dev/null || true)
+    curl_bound 10 -b "$COOKIE" -H "X-CSRF-Token: $csrf" -H 'X-Requested-With: XMLHttpRequest' \
+        -o /dev/null "$(portal)/api/account/logout?nasId=$(get nas_id)&userIpv4=$IP&userMac=$MAC&username=$(get username)&isp=$isp" || true
+    reset_local stopped
+}
+
+cleanup() {
+    logout
+    release_identity_lock
+    rm -rf "$BASE"
+}
+trap 'exit 0' INT TERM
+trap cleanup EXIT
+
+authenticate() {
+    local url csrf body code auth dial msg isp
+    url=$(portal)
+    [ -n "$url" ] || { err '门户地址为空'; reset_local error; return 1; }
+    [ -n "$(get username)" ] && [ -n "$(get password)" ] || { err '账号或密码为空'; reset_local error; return 1; }
+    reset_local authenticating
+
+    curl_bound 10 -c "$COOKIE" -o "$BASE/csrf.json" "$url/api/csrf-token" || { err '获取 CSRF token 失败'; reset_local error; return 1; }
+    csrf=$(jsonfilter -i "$BASE/csrf.json" -e '@.csrf_token' 2>/dev/null || true)
+    [ -n "$csrf" ] || { err 'CSRF token 为空'; reset_local error; return 1; }
+    printf %s "$csrf" > "$CSRF_FILE"
+    chmod 600 "$COOKIE" "$CSRF_FILE"
+
+    body=$(curl_bound 15 -b "$COOKIE" -H "X-CSRF-Token: $csrf" -H 'X-Requested-With: XMLHttpRequest' \
+        -H 'Content-Type: application/x-www-form-urlencoded' --data-urlencode "nasId=$(get nas_id)" \
+        --data-urlencode "userIpv4=$IP" --data-urlencode "userMac=$MAC" \
+        --data-urlencode "username=$(get username)" --data-urlencode "password=$(get password)" \
+        "$url/api/account/check" || true)
+    code=$(printf %s "$body" | jsonfilter -e '@.code' 2>/dev/null || true)
+    [ "$code" = 0 ] || { err '账号检查失败'; reset_local error; return 1; }
+
+    body=$(curl_bound 20 -b "$COOKIE" -H "X-CSRF-Token: $csrf" -H 'X-Requested-With: XMLHttpRequest' \
+        -H 'Content-Type: application/x-www-form-urlencoded' --data-urlencode "nasId=$(get nas_id)" \
+        --data-urlencode "userIpv4=$IP" --data-urlencode "userMac=$MAC" \
+        --data-urlencode "username=$(get username)" --data-urlencode "password=$(get password)" \
+        "$url/api/account/login" || true)
+    code=$(printf %s "$body" | jsonfilter -e '@.code' 2>/dev/null || true)
+    auth=$(printf %s "$body" | jsonfilter -e '@.authCode' 2>/dev/null || true)
+    dial=$(printf %s "$body" | jsonfilter -e '@.dialCode' 2>/dev/null || true)
+    if [ "$code" != 0 ] || ! printf %s "$auth" | grep -qi '^ok:' || printf %s "$dial" | grep -q '^E'; then
+        msg=$(printf %s "$body" | jsonfilter -e '@.dialMsg' 2>/dev/null || true)
+        [ -n "$msg" ] || msg=$(printf %s "$body" | jsonfilter -e '@.authMsg' 2>/dev/null || true)
+        [ -n "$msg" ] || msg='认证未成功'
+        err "登录失败: $msg"
+        reset_local error
+        return 1
+    fi
+
+    if ! identity_matches "$body"; then
+        err '服务端返回的账号、IPv4、MAC 或 SessionId 与本实例不符；拒绝接管该会话'
+        reset_local identity_mismatch
+        return 1
+    fi
+
+    isp=$(printf %s "$body" | jsonfilter -e '@.isp' 2>/dev/null || true)
+    printf %s "$isp" > "$ISP_FILE"
+    printf %s "$RESPONSE_SESSION" > "$SESSION_FILE"
+    chmod 600 "$ISP_FILE" "$SESSION_FILE"
+    ACTIVE=1
+    OWNED=1
+    write_status online
+    log "登录成功 interface=$(get interface) device=$DEVICE ip=$IP role=$(get role)"
+}
+
+session_ok() {
+    local body code dial previous_session
+    [ "$ACTIVE" -eq 1 ] && [ "$OWNED" -eq 1 ] || return 1
+    body=$(curl_bound 10 -b "$COOKIE" "$(portal)/api/account/status?nasId=$(get nas_id)&userIpv4=$IP&userMac=$MAC&username=$(get username)&isp=$(cat "$ISP_FILE" 2>/dev/null || true)" || true)
+    code=$(printf %s "$body" | jsonfilter -e '@.code' 2>/dev/null || true)
+    dial=$(printf %s "$body" | jsonfilter -e '@.dialCode' 2>/dev/null || true)
+    [ "$code" = 0 ] && ! printf %s "$dial" | grep -q '^E' && identity_matches "$body" || return 1
+    previous_session=$(cat "$SESSION_FILE" 2>/dev/null || true)
+    [ -z "$previous_session" ] || [ "$RESPONSE_SESSION" = "$previous_session" ] || log '服务端 SessionId 已更新'
+    printf %s "$RESPONSE_SESSION" > "$SESSION_FILE"
+    chmod 600 "$SESSION_FILE"
+}
+
+mkdir -p "$BASE"
+chmod 700 "$BASE"
+write_status starting
+
+while :; do
+    if network_info; then
+        if ! claim_identity; then
+            reset_local identity_conflict
+            sleep 30
+            continue
+        fi
+        if [ "$ACTIVE" -eq 1 ]; then
+            if ! session_ok; then
+                err '认证状态无效或返回身份不匹配，丢弃本地会话并重新登录'
+                reset_local identity_mismatch
+                authenticate || true
+            fi
+        else
+            authenticate || true
+        fi
+    else
+        release_identity_lock
+        [ "$ACTIVE" -eq 0 ] || reset_local waiting
+        write_status waiting
+        log "等待实例 $SECTION 所选接口获取 IPv4 地址"
+    fi
+    sleep 30
 done

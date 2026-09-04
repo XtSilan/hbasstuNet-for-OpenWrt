@@ -1,0 +1,35 @@
+# Local build output
+/output/
+/*.ipk
+
+# OpenWrt SDK/build artifacts if the package is built in-place
+/bin/
+/build_dir/
+/dl/
+/logs/
+/staging_dir/
+/tmp/
+/.config
+/.config.old
+
+# Local credentials and runtime state
+.env
+.env.*
+!.env.example
+*.cookie
+*.session
+*.token
+*credentials*
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
+
+# Test/tool caches
+__pycache__/
+*.py[cod]

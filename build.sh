@@ -6,7 +6,7 @@ set -e
 
 # Use stable 24.10.0 release (produces IPK packages)
 export VERSION_PATH="${VERSION_PATH:-releases/24.10.0}"
-export HBASSTUNET_VERSION="${HBASSTUNET_VERSION:-0.0.0}"
+export HBASSTUNET_VERSION="${HBASSTUNET_VERSION:-1.3.0}"
 
 cd /builder
 
@@ -27,11 +27,13 @@ rm -rf ./package/luci-app-hbasstunet
 cp -a /package ./package/luci-app-hbasstunet
 
 echo "=== Building package ==="
+find bin/packages -type f -name 'luci-app-hbasstunet_*.ipk' -delete 2>/dev/null || true
 make package/luci-app-hbasstunet/compile V=s -j4
 
 echo "=== Finding built packages ==="
-package=$(find bin/packages -type f -name 'luci-app-hbasstunet_*.ipk' -print -quit)
+package=$(find bin/packages -type f -name "luci-app-hbasstunet_${HBASSTUNET_VERSION}-*.ipk" -print -quit)
 [ -n "$package" ] || { echo "No luci-app-hbasstunet IPK was produced." >&2; exit 1; }
+rm -f /output/luci-app-hbasstunet_*.ipk
 cp "$package" /output/
 test -f "/output/$(basename "$package")"
 

@@ -3,17 +3,39 @@
 START=95
 USE_PROCD=1
 
-start_service() {
-    chmod 600 /etc/config/hbasstunet 2>/dev/null || true
-    config_load hbasstunet
-    config_get_bool enabled main enabled 0
+start_instance() {
+    local section="$1"
+    local enabled interface
+
+    config_get_bool enabled "$section" enabled 0
     [ "$enabled" -eq 1 ] || return 0
-    procd_open_instance
-    procd_set_param command /usr/sbin/hbasstunet
+    config_get interface "$section" interface wan
+    case " $started_interfaces " in
+        *" $interface "*)
+            logger -t hbasstunet -p daemon.err -- "跳过实例 $section：接口 $interface 已被另一个启用账户使用"
+            return 0
+            ;;
+    esac
+    started_interfaces="$started_interfaces $interface"
+
+    procd_open_instance "$section"
+    procd_set_param command /usr/sbin/hbasstunet "$section"
     procd_set_param respawn 3600 5 5
     procd_set_param stdout 1
     procd_set_param stderr 1
+    procd_set_param file /etc/config/hbasstunet
     procd_close_instance
+}
+
+start_service() {
+    chmod 600 /etc/config/hbasstunet 2>/dev/null || true
+    started_interfaces=
+    config_load hbasstunet
+    config_foreach start_instance hbasstunet
+}
+
+service_triggers() {
+    procd_add_reload_trigger hbasstunet
 }
 
 reload_service() {

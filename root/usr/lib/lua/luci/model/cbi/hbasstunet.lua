@@ -1,16 +1,18 @@
 local sys = require "luci.sys"
 local uci = require "luci.model.uci".cursor()
 
-m = Map("hbasstunet", translate("hbasstuNet"), translate("校园网自动登录设置"))
+m = Map("hbasstunet", translate("hbasstuNet"), translate("可为不同校园网接口分别添加认证账户。每个启用的账户由独立后台实例维护。"))
 m.on_after_commit = function() sys.call("/etc/init.d/hbasstunet reload >/dev/null 2>&1") end
 
-s = m:section(NamedSection, "main", "hbasstunet", translate("认证设置"))
+s = m:section(TypedSection, "hbasstunet", translate("认证账户"))
 s.anonymous = true
+s.addremove = true
+s.sortable = true
 
-e = s:option(Flag, "enabled", translate("启用自动登录"))
+e = s:option(Flag, "enabled", translate("启用"))
 e.default = "0"
 e.rmempty = false
-e.description = translate("启用后后台自动检查网络并使用保存的账号认证；关闭后停止认证并注销当前会话。")
+e.description = translate("每个启用的账户都会启动一个独立认证实例。")
 
 u = s:option(Value, "username", translate("校园网账号"))
 u.rmempty = false
@@ -28,13 +30,29 @@ r.rmempty = false
 i = s:option(ListValue, "interface", translate("校园网接口"))
 i.default = "wan"
 i.rmempty = false
-i.description = translate("选择连接校园网的 OpenWrt 逻辑网络（如 wan 或 wwan）；程序将使用该网络的 IPv4 地址和 MAC 地址进行门户认证。")
+i.description = translate("选择该账户专用的 OpenWrt 逻辑网络；认证请求会强制绑定该网络的三层设备和 IPv4 地址。")
 uci:foreach("network", "interface", function(iface)
     local name = iface[".name"]
     if name and name ~= "loopback" then
         i:value(name, iface.description or name)
     end
 end)
+
+function i.validate(self, value, section)
+    if not value or value == "" then
+        return nil, translate("请选择校园网接口")
+    end
+    local duplicate = false
+    uci:foreach("hbasstunet", "hbasstunet", function(account)
+        if account[".name"] ~= section and account.enabled == "1" and account.interface == value then
+            duplicate = true
+        end
+    end)
+    if duplicate then
+        return nil, translate("一个接口只能绑定一个启用的认证账户")
+    end
+    return value
+end
 
 b = s:option(Value, "portal_url", translate("门户地址"))
 b.default = "http://192.168.99.135"

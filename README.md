@@ -10,12 +10,15 @@
 ## ✨ 功能特性
 
 - 提供 LuCI 中文配置页面
-- 支持学生/教师账号类型选择
+- 支持多个学生/教师认证账户，每个账户分别保存启用状态、账号、密码、类型、接口、Portal 地址和 NAS ID
 - 使用 LuCI 原生下拉菜单选择 OpenWrt 逻辑网络
 - 自动获取所选网络的 IPv4 地址、设备名和 MAC 地址
 - 自动完成 CSRF Token、Cookie、登录、状态检查和登出流程
 - 认证失效后自动重新登录
 - 可在 LuCI 页面检查 GitHub Release、查看提交更新内容并校验下载安装 IPK
+- 每个账户由独立 procd 实例维护 Cookie、CSRF Token、SessionId、运行状态和日志标签
+- Portal 请求绑定到所选网络当前的源 IPv4，避免被 mwan3 分流到其他 WAN
+- 校验服务端返回的账号、IPv4、MAC 和 SessionId，拒绝把其他账户的会话误判为成功
 - 由 procd 管理后台服务并支持异常拉起
 - 账号配置保存在独立 UCI 配置文件中
 
@@ -50,14 +53,16 @@ make package/luci-app-hbasstunet/compile V=s
 
 ## 🚀 使用方法
 
-1. 打开 LuCI 的“网络 → hbasstuNet”
-2. 填写校园网账号和密码
+1. 打开 LuCI 的“网络 → hbasstuNet”并添加认证账户
+2. 分别填写每个校园网账号和密码
 3. 选择学生或教师账号类型
 4. 从下拉菜单选择连接校园网的逻辑网络
 5. 按需确认门户地址和 NAS ID
-6. 勾选“启用自动登录”并保存应用
+6. 启用需要运行的账户并保存应用
 
 默认门户地址为 `http://192.168.99.135`，默认逻辑网络为 `wan`。
+
+每个启用账户必须选择不同的逻辑网络。双 WAN 场景中，两条网络还必须实际拥有不同的 IPv4 和 MAC；仅添加两个配置项不能把同一个网络身份变成两个设备。
 
 ## 🔌 校园网接口有什么用？
 
@@ -65,7 +70,7 @@ OpenWrt 可能同时存在 `lan`、`wan`、`wwan` 等多个逻辑网络。插件
 
 1. 通过 ubus 查询该网络当前使用的三层设备
 2. 读取校园网分配的 IPv4 地址和设备 MAC 地址
-3. 将 Portal 请求绑定到该 IPv4 地址发送
+3. 将 Portal 请求的源地址绑定为该 IPv4 发送
 4. 在地址尚未获取时等待，而不是使用错误的出口反复认证
 
 这个选项填写的是 OpenWrt 的**逻辑网络名**，不是 `eth0`、`wlan0` 之类的 Linux 设备名。配置页会从 OpenWrt 的 UCI 网络配置读取已定义的逻辑网络，因此无需手工输入。
@@ -83,10 +88,9 @@ OpenWrt 可能同时存在 `lan`、`wan`、`wwan` 等多个逻辑网络。插件
 ```text
 LuCI 配置页
 └── UCI /etc/config/hbasstunet
-    └── procd 后台服务
-        ├── ubus 获取接口、IPv4 和 MAC
-        ├── curl 调用 Portal API
-        └── Cookie 与会话状态维护
+    └── procd 后台服务（每个账户一个实例）
+        ├── account1：接口 A、Cookie、CSRF、SessionId、状态和日志标签
+        └── account2：接口 B、Cookie、CSRF、SessionId、状态和日志标签
 ```
 
 ## 📁 目录结构
@@ -107,11 +111,11 @@ LuCI 配置页
 
 ```sh
 /etc/init.d/hbasstunet status
-logread -e hbasstunet
+logread -e hbasstunet.account1
 ubus call network.interface.wan status
 ```
 
-如果选择的不是 `wan`，请将最后一条命令中的网络名替换为实际选择值。若日志持续显示“等待所选校园网接口获取 IPv4 地址”，通常表示所选逻辑网络尚未获得 IPv4 地址，或选错了网络。
+每个实例的非敏感运行状态保存在 `/var/run/hbasstunet/<实例名>/status`，Cookie、CSRF 和 SessionId 文件彼此隔离且权限为 `600`。如果选择的不是 `wan`，请将最后一条命令中的网络名替换为实际选择值。若日志持续显示“等待所选校园网接口获取 IPv4 地址”，通常表示所选逻辑网络尚未获得 IPv4 地址，或选错了网络。
 
 ## 🔐 配置与安全
 
