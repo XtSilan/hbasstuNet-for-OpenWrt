@@ -1,0 +1,35 @@
+name: Verify OpenWrt package
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Build IPK with OpenWrt SDK
+        run: |
+          mkdir -p "$RUNNER_TEMP/hbasstunet-output"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/package" \
+            -v "$RUNNER_TEMP/hbasstunet-output:/output" \
+            -e VERSION_PATH=releases/24.10.0 \
+            openwrt/sdk:x86_64 bash /package/build.sh
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: luci-app-hbasstunet-ipk
+          path: ${{ runner.temp }}/hbasstunet-output/*.ipk
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,66 @@
+name: Release OpenWrt package
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag, for example v1.0.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build and validate IPK
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Tag must use the v1.2.3 format: $RELEASE_VERSION"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/hbasstunet-output"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/package" \
+            -v "$RUNNER_TEMP/hbasstunet-output:/output" \
+            -e VERSION_PATH=releases/24.10.0 \
+            openwrt/sdk:x86_64 bash /package/build.sh
+
+      - name: Prepare release files
+        shell: bash
+        run: |
+          mkdir -p release
+          cp "$RUNNER_TEMP"/hbasstunet-output/luci-app-hbasstunet_*.ipk release/
+          sha256sum release/*.ipk > release/SHA256SUMS.txt
+          notes=$(git log -1 --pretty=%B "$RELEASE_VERSION" 2>/dev/null || true)
+          if [[ -z "${notes//[[:space:]]/}" ]]; then
+            notes="hbasstuNet OpenWrt package $RELEASE_VERSION"
+          fi
+          printf '%s\n' "$notes" > release-notes.md
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_VERSION }}
+          name: hbasstuNet ${{ env.RELEASE_VERSION }}
+          generate_release_notes: false
+          body_path: release-notes.md
+          files: release/*
+
+      - name: Clean build output
+        if: always()
+        shell: bash
+        run: rm -rf release release-notes.md "$RUNNER_TEMP/hbasstunet-output"

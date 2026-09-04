@@ -1,16 +1,11 @@
 #!/bin/bash
 set -e
 
-# Proxy settings
-export http_proxy=http://host.docker.internal:7890
-export https_proxy=http://host.docker.internal:7890
-export HTTP_PROXY=http://host.docker.internal:7890
-export HTTPS_PROXY=http://host.docker.internal:7890
-export no_proxy="localhost;*.local;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;172.2*;172.30.*;172.31.*;192.168.*"
-export NO_PROXY="$no_proxy"
+# Optional proxy settings can be supplied by the caller (for example, build.bat).
+# Do not hard-code a workstation-only proxy so this script also works in CI.
 
 # Use stable 24.10.0 release (produces IPK packages)
-export VERSION_PATH="releases/24.10.0"
+export VERSION_PATH="${VERSION_PATH:-releases/24.10.0}"
 
 cd /builder
 

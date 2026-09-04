@@ -46,6 +46,15 @@ make package/luci-app-hbasstunet/compile V=s
 
 生成的安装包位于 SDK 的 `bin/packages/` 目录。仓库内的 `build.sh` 和 `build.bat` 也提供了基于容器构建 OpenWrt 24.10 软件包的流程。
 
+### GitHub Actions
+
+仓库包含与桌面版项目一致的两条自动化流程：
+
+- `Verify OpenWrt package`：向 `main` 推送、创建面向 `main` 的 Pull Request，或手动运行时，使用 OpenWrt 24.10 x86_64 SDK 构建并上传 IPK 工件。
+- `Release OpenWrt package`：推送 `v1.2.3` 格式的标签，或在 Actions 页面手动输入标签时，构建 IPK、生成 `SHA256SUMS.txt` 并发布 GitHub Release。
+
+Release 工作流需要仓库的 `contents: write` 权限；GitHub Actions 会使用默认的 `GITHUB_TOKEN` 完成发布。
+
 ## 🚀 使用方法
 
 1. 打开 LuCI 的“网络 → hbasstuNet”
