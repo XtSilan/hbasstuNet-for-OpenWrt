@@ -1,0 +1,69 @@
+<div class="cbi-section">
+    <h3><%:软件更新%></h3>
+    <p class="cbi-section-descr"><%:检查 GitHub 上的最新版本，查看提交说明并下载更新。%></p>
+    <div>
+        <button class="cbi-button cbi-button-apply" id="hbasstunet-update-check" type="button"><%:检查更新%></button>
+        <button class="cbi-button cbi-button-positive" id="hbasstunet-update-install" type="button" disabled="disabled"><%:下载并更新%></button>
+    </div>
+    <p id="hbasstunet-update-status" style="margin-top:1em;"></p>
+    <pre id="hbasstunet-update-notes" style="display:none; white-space:pre-wrap; max-height:20em; overflow:auto;"></pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var endpoint = '<%=url("admin/network/hbasstunet/update")%>';
+    var check = document.getElementById('hbasstunet-update-check');
+    var install = document.getElementById('hbasstunet-update-install');
+    var status = document.getElementById('hbasstunet-update-status');
+    var notes = document.getElementById('hbasstunet-update-notes');
+    var release = null;
+
+    function request(action, callback) {
+        check.disabled = true;
+        install.disabled = true;
+        status.textContent = '<%:正在处理，请稍候...%>';
+        var done = function(x, data) {
+            check.disabled = false;
+            callback(data || { ok: false, message: '<%:请求失败%>' });
+        };
+        if (action == 'install')
+            XHR.post(endpoint, {
+                action: action,
+                confirm: '1',
+                token: '<%=token%>'
+            }, done);
+        else
+            XHR.get(endpoint, { action: action }, done);
+    }
+
+    check.onclick = function() {
+        request('check', function(data) {
+            if (!data.ok) {
+                status.textContent = data.message || '<%:检查更新失败%>';
+                return;
+            }
+            release = data;
+            status.textContent = '<%:当前版本%> ' + (data.current_version || '<%:未知%>') + ' · <%:最新版本%> ' + data.tag_name + (data.published_at ? ' · ' + data.published_at.substring(0, 10) : '');
+            notes.textContent = data.body || '<%:该版本没有发布说明。%>';
+            notes.style.display = 'block';
+            install.disabled = !data.update_available;
+            if (!data.update_available)
+                status.textContent += ' · <%:当前已是最新版本%>';
+        });
+    };
+
+    install.onclick = function() {
+        if (!release || !confirm('<%:确定下载并安装%> ' + release.tag_name + ' <%:吗？安装过程中 LuCI 可能短暂重启。%>'))
+            return;
+        request('install', function(data) {
+            status.textContent = data.message || (data.ok ? '<%:更新成功%>' : '<%:更新失败%>');
+            if (data.ok) {
+                install.disabled = true;
+                window.setTimeout(function() { window.location.reload(); }, 2000);
+            } else {
+                install.disabled = false;
+            }
+        });
+    };
+})();
+</script>

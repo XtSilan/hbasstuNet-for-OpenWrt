@@ -38,6 +38,7 @@ jobs:
             -v "$GITHUB_WORKSPACE:/package" \
             -v "$RUNNER_TEMP/hbasstunet-output:/output" \
             -e VERSION_PATH=releases/24.10.0 \
+            -e HBASSTUNET_VERSION="${RELEASE_VERSION#v}" \
             openwrt/sdk:x86_64 bash /package/build.sh
 
       - name: Prepare release files
@@ -46,11 +47,21 @@ jobs:
           mkdir -p release
           cp "$RUNNER_TEMP"/hbasstunet-output/luci-app-hbasstunet_*.ipk release/
           sha256sum release/*.ipk > release/SHA256SUMS.txt
-          notes=$(git log -1 --pretty=%B "$RELEASE_VERSION" 2>/dev/null || true)
+          if git rev-parse --verify "$RELEASE_VERSION^{commit}" >/dev/null 2>&1; then
+            release_ref=$RELEASE_VERSION
+          else
+            release_ref=HEAD
+          fi
+          previous_tag=$(git tag --sort=-version:refname | grep -Fxv "$RELEASE_VERSION" | head -n 1 || true)
+          if [[ -n "$previous_tag" ]]; then
+            notes=$(git log --pretty='- %s (`%h`)' "$previous_tag..$release_ref" 2>/dev/null || true)
+          else
+            notes=$(git log --pretty='- %s (`%h`)' "$release_ref" 2>/dev/null || true)
+          fi
           if [[ -z "${notes//[[:space:]]/}" ]]; then
             notes="hbasstuNet OpenWrt package $RELEASE_VERSION"
           fi
-          printf '%s\n' "$notes" > release-notes.md
+          printf '## 更新内容\n\n%s\n' "$notes" > release-notes.md
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

@@ -1,6 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-hbasstunet
+PKG_VERSION:=$(if $(HBASSTUNET_VERSION),$(HBASSTUNET_VERSION),1.0.0)
 PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
@@ -10,7 +11,7 @@ define Package/$(PKG_NAME)
   CATEGORY:=LuCI
   SUBMENU:=Applications
   TITLE:=hbasstuNet campus network login
-  DEPENDS:=+luci-base +curl +jsonfilter
+  DEPENDS:=+luci-base +luci-lib-jsonc +curl +ca-bundle +jsonfilter
 endef
 
 define Package/$(PKG_NAME)/description
@@ -29,9 +30,10 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_CONF) ./root/etc/config/hbasstunet $(1)/etc/config/hbasstunet
 	$(INSTALL_BIN) ./root/etc/init.d/hbasstunet $(1)/etc/init.d/hbasstunet
 	$(INSTALL_BIN) ./root/usr/sbin/hbasstunet $(1)/usr/sbin/hbasstunet
-	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller $(1)/usr/lib/lua/luci/model/cbi
+	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller $(1)/usr/lib/lua/luci/model/cbi $(1)/usr/lib/lua/luci/view/hbasstunet
 	$(INSTALL_DATA) ./root/usr/lib/lua/luci/controller/hbasstunet.lua $(1)/usr/lib/lua/luci/controller/hbasstunet.lua
 	$(INSTALL_DATA) ./root/usr/lib/lua/luci/model/cbi/hbasstunet.lua $(1)/usr/lib/lua/luci/model/cbi/hbasstunet.lua
+	$(INSTALL_DATA) ./root/usr/lib/lua/luci/view/hbasstunet/update.htm $(1)/usr/lib/lua/luci/view/hbasstunet/update.htm
 endef
 
 $(eval $(call BuildPackage,$(PKG_NAME)))

@@ -1,5 +1,5 @@
 local sys = require "luci.sys"
-local widgets = require "luci.tools.widgets"
+local uci = require "luci.model.uci".cursor()
 
 m = Map("hbasstunet", translate("hbasstuNet"), translate("校园网自动登录设置"))
 m.on_after_commit = function() sys.call("/etc/init.d/hbasstunet reload >/dev/null 2>&1") end
@@ -25,11 +25,16 @@ r:value("teacher", translate("教师"))
 r.default = "student"
 r.rmempty = false
 
-i = s:option(widgets.NetworkSelect, "interface", translate("校园网接口"))
+i = s:option(ListValue, "interface", translate("校园网接口"))
 i.default = "wan"
 i.rmempty = false
-i.nocreate = true
 i.description = translate("选择连接校园网的 OpenWrt 逻辑网络（如 wan 或 wwan）；程序将使用该网络的 IPv4 地址和 MAC 地址进行门户认证。")
+uci:foreach("network", "interface", function(iface)
+    local name = iface[".name"]
+    if name and name ~= "loopback" then
+        i:value(name, iface.description or name)
+    end
+end)
 
 b = s:option(Value, "portal_url", translate("门户地址"))
 b.default = "http://192.168.99.135"
@@ -38,5 +43,8 @@ b.rmempty = false
 n = s:option(Value, "nas_id", translate("NAS ID"))
 n.default = "1"
 n.rmempty = false
+
+u = m:section(SimpleSection, translate("软件更新"))
+u.template = "hbasstunet/update"
 
 return m

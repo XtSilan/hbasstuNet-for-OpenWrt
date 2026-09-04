@@ -6,6 +6,7 @@ set -e
 
 # Use stable 24.10.0 release (produces IPK packages)
 export VERSION_PATH="${VERSION_PATH:-releases/24.10.0}"
+export HBASSTUNET_VERSION="${HBASSTUNET_VERSION:-0.0.0}"
 
 cd /builder
 
@@ -22,6 +23,7 @@ echo "=== Configuring build ==="
 make defconfig
 
 echo "=== Copying package ==="
+rm -rf ./package/luci-app-hbasstunet
 cp -a /package ./package/luci-app-hbasstunet
 
 echo "=== Building package ==="

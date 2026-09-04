@@ -25,6 +25,7 @@ jobs:
             -v "$GITHUB_WORKSPACE:/package" \
             -v "$RUNNER_TEMP/hbasstunet-output:/output" \
             -e VERSION_PATH=releases/24.10.0 \
+            -e HBASSTUNET_VERSION=0.0.0 \
             openwrt/sdk:x86_64 bash /package/build.sh
 
       - name: Upload package artifact
