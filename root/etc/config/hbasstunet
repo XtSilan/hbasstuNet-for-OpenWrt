@@ -1,0 +1,8 @@
+config hbasstunet 'main'
+	option enabled '0'
+	option username ''
+	option password ''
+	option role 'student'
+	option interface 'wan'
+	option portal_url 'http://192.168.99.135'
+	option nas_id '1'

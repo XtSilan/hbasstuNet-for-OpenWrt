@@ -1,0 +1,61 @@
+#!/bin/sh
+set -u
+BASE=/var/run/hbasstunet
+COOKIE=$BASE/cookie
+ISP_FILE=$BASE/isp
+CSRF_FILE=$BASE/csrf
+ACTIVE=0
+get(){ uci -q get hbasstunet.main.$1 2>/dev/null || true; }
+log(){ logger -t hbasstunet -- "$*"; }
+err(){ logger -t hbasstunet -p daemon.err -- "$*"; }
+portal(){ get portal_url | sed 's#/$##'; }
+network_info(){
+  local name json
+  name=$(get interface); [ -n "$name" ] || name=wan
+  json=$(ubus call network.interface.$name status 2>/dev/null || true)
+  DEVICE=$(printf %s "$json" | jsonfilter -e '@.l3_device' 2>/dev/null || true)
+  IP=$(printf %s "$json" | jsonfilter -e '@.ipv4-address[0].address' 2>/dev/null || true)
+  [ -n "$DEVICE" ] && [ -n "$IP" ] || return 1
+  MAC=$(cat /sys/class/net/$DEVICE/address 2>/dev/null || true)
+  [ -n "$MAC" ]
+}
+logout(){
+  [ -s "$COOKIE" ] || return 0
+  local isp csrf; isp=$(cat $ISP_FILE 2>/dev/null || true); csrf=$(cat $CSRF_FILE 2>/dev/null || true)
+  curl -sS --interface "$IP" --connect-timeout 5 --max-time 10 -b $COOKIE -H "X-CSRF-Token: $csrf" -H 'X-Requested-With: XMLHttpRequest' -o /dev/null "$(portal)/api/account/logout?nasId=$(get nas_id)&userIpv4=$IP&userMac=$MAC&username=$(get username)&isp=$isp" || true
+  ACTIVE=0
+}
+cleanup(){ logout; rm -rf $BASE; }; trap cleanup EXIT INT TERM
+authenticate(){
+  local url csrf body code auth online dial msg isp; url=$(portal); mkdir -p $BASE; chmod 700 $BASE
+  rm -f $COOKIE $BASE/csrf.json
+  curl -sS --interface "$IP" --connect-timeout 5 --max-time 10 -c $COOKIE -o $BASE/csrf.json "$url/api/csrf-token" || { err '获取 CSRF token 失败'; return 1; }
+  csrf=$(jsonfilter -i $BASE/csrf.json -e '@.csrf_token' 2>/dev/null || true); [ -n "$csrf" ] || { err 'CSRF token 为空'; return 1; }; printf %s "$csrf" > "$CSRF_FILE"; chmod 600 "$CSRF_FILE"
+  body=$(curl -sS --interface "$IP" --connect-timeout 5 --max-time 15 -b $COOKIE -H "X-CSRF-Token: $csrf" -H 'X-Requested-With: XMLHttpRequest' -H 'Content-Type: application/x-www-form-urlencoded' --data-urlencode "nasId=$(get nas_id)" --data-urlencode "userIpv4=$IP" --data-urlencode "userMac=$MAC" --data-urlencode "username=$(get username)" --data-urlencode "password=$(get password)" "$url/api/account/check" || true)
+  code=$(printf %s "$body" | jsonfilter -e '@.code' 2>/dev/null || true); [ "$code" = 0 ] || { err '账号检查失败'; logout; return 1; }
+  body=$(curl -sS --interface "$IP" --connect-timeout 5 --max-time 20 -b $COOKIE -H "X-CSRF-Token: $csrf" -H 'X-Requested-With: XMLHttpRequest' -H 'Content-Type: application/x-www-form-urlencoded' --data-urlencode "nasId=$(get nas_id)" --data-urlencode "userIpv4=$IP" --data-urlencode "userMac=$MAC" --data-urlencode "username=$(get username)" --data-urlencode "password=$(get password)" "$url/api/account/login" || true)
+  code=$(printf %s "$body" | jsonfilter -e '@.code' 2>/dev/null || true); auth=$(printf %s "$body" | jsonfilter -e '@.authCode' 2>/dev/null || true); online=$(printf %s "$body" | jsonfilter -e '@.online.Username' 2>/dev/null || true); dial=$(printf %s "$body" | jsonfilter -e '@.dialCode' 2>/dev/null || true)
+  if [ "$code" != 0 ] || [ -z "$online" ] || ! printf %s "$auth" | grep -qi '^ok:' || printf %s "$dial" | grep -q '^E'; then
+    msg=$(printf %s "$body" | jsonfilter -e '@.dialMsg' 2>/dev/null || true); [ -n "$msg" ] || msg=$(printf %s "$body" | jsonfilter -e '@.authMsg' 2>/dev/null || true); err "登录失败: ${msg:-认证未成功}"; logout; return 1
+  fi
+  isp=$(printf %s "$body" | jsonfilter -e '@.isp' 2>/dev/null || true); printf %s "$isp" > $ISP_FILE; chmod 600 $ISP_FILE; ACTIVE=1; log "登录成功 account=$online isp=${isp:-unknown} ip=$IP"
+}
+session_ok(){
+  [ $ACTIVE -eq 1 ] || return 1
+  local body code online dial
+  body=$(curl -sS --interface "$IP" --connect-timeout 5 --max-time 10 -b $COOKIE "$(portal)/api/account/status?nasId=$(get nas_id)&userIpv4=$IP&userMac=$MAC&username=$(get username)&isp=$(cat $ISP_FILE 2>/dev/null || true)" || true)
+  code=$(printf %s "$body" | jsonfilter -e '@.code' 2>/dev/null || true); online=$(printf %s "$body" | jsonfilter -e '@.online.Username' 2>/dev/null || true); dial=$(printf %s "$body" | jsonfilter -e '@.dialCode' 2>/dev/null || true)
+  [ "$code" = 0 ] && [ -n "$online" ] && ! printf %s "$dial" | grep -q '^E'
+}
+while :; do
+  if network_info; then
+    if [ $ACTIVE -eq 1 ]; then
+      session_ok || { log '认证已失效，准备重新登录'; logout; authenticate || true; }
+    else
+      authenticate || true
+    fi
+  else
+    log '等待所选校园网接口获取 IPv4 地址'
+  fi
+  sleep 30
+done
