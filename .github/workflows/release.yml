@@ -21,7 +21,7 @@ jobs:
       RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -33,6 +33,7 @@ jobs:
             exit 1
           fi
           mkdir -p "$RUNNER_TEMP/hbasstunet-output"
+          chmod 0777 "$RUNNER_TEMP/hbasstunet-output"
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/package" \
             -v "$RUNNER_TEMP/hbasstunet-output:/output" \

@@ -5,7 +5,7 @@
 ![OpenWrt](https://img.shields.io/badge/OpenWrt-24.10-00B5E2?style=flat-square&logo=openwrt) ![LuCI](https://img.shields.io/badge/LuCI-Application-00B5E2?style=flat-square) ![Shell](https://img.shields.io/badge/Shell-POSIX-4EAA25?style=flat-square&logo=gnubash)
 
 > [!WARNING]
-> 本项目仅用于学习、研究和个人合法网络接入。请遵守学校网络管理规定，不得用于绕过认证、共享账号、干扰网络或其他未授权行为。
+> 本项目仅用于学习、研究和个人合法网络接入。请遵守学校网络管理规定，不得用于绕过认证、共享账号、干扰网络或其他未授权行为，详情请见[免责声明](./DISCLAIMER.md)
 
 ## ✨ 功能特性
 
@@ -45,15 +45,6 @@ make package/luci-app-hbasstunet/compile V=s
 ```
 
 生成的安装包位于 SDK 的 `bin/packages/` 目录。仓库内的 `build.sh` 和 `build.bat` 也提供了基于容器构建 OpenWrt 24.10 软件包的流程。
-
-### GitHub Actions
-
-仓库包含与桌面版项目一致的两条自动化流程：
-
-- `Verify OpenWrt package`：向 `main` 推送、创建面向 `main` 的 Pull Request，或手动运行时，使用 OpenWrt 24.10 x86_64 SDK 构建并上传 IPK 工件。
-- `Release OpenWrt package`：推送 `v1.2.3` 格式的标签，或在 Actions 页面手动输入标签时，构建 IPK、生成 `SHA256SUMS.txt` 并发布 GitHub Release。
-
-Release 工作流需要仓库的 `contents: write` 权限；GitHub Actions 会使用默认的 `GITHUB_TOKEN` 完成发布。
 
 ## 🚀 使用方法
 
@@ -122,8 +113,11 @@ ubus call network.interface.wan status
 
 ## 🔐 配置与安全
 
-账号和密码存储在 `/etc/config/hbasstunet`，服务启动时会尝试将该文件权限收紧为 `600`。OpenWrt 的 UCI 配置并非加密保险箱，请限制路由器管理权限，不要向他人导出包含凭据的配置备份。
+账号和密码存储在 `/etc/config/hbasstunet`，服务启动时会尝试将该文件权限收紧为 `600`。
 
 ## 📄 说明
 
 项目名称、校园网络名称及相关标识不代表学校官方背书；使用本软件还须遵守所在网络的管理规定。
+
+## LICENSE
+[MIT](./LICENSE)

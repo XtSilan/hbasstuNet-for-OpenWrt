@@ -28,7 +28,10 @@ echo "=== Building package ==="
 make package/luci-app-hbasstunet/compile V=s -j4
 
 echo "=== Finding built packages ==="
-find bin/packages -name 'luci-app-hbasstunet*' -exec cp {} /output/ \;
+package=$(find bin/packages -type f -name 'luci-app-hbasstunet_*.ipk' -print -quit)
+[ -n "$package" ] || { echo "No luci-app-hbasstunet IPK was produced." >&2; exit 1; }
+cp "$package" /output/
+test -f "/output/$(basename "$package")"
 
 echo "=== BUILD COMPLETE ==="
 ls -la /output/ 2>/dev/null || echo "No package files found in output."

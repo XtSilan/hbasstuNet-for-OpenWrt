@@ -15,11 +15,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Build IPK with OpenWrt SDK
         run: |
           mkdir -p "$RUNNER_TEMP/hbasstunet-output"
+          chmod 0777 "$RUNNER_TEMP/hbasstunet-output"
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/package" \
             -v "$RUNNER_TEMP/hbasstunet-output:/output" \
