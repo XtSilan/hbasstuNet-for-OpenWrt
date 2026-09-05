@@ -112,9 +112,10 @@ network_info() {
 curl_bound() {
     local timeout="$1"
     shift
-    # Bind to the concrete L3 device. This is required when two WANs share a
-    # gateway/subnet; source-IP binding alone can still select the other NIC.
-    curl -sS --interface "$DEVICE" --connect-timeout 5 --max-time "$timeout" "$@"
+    # Bind the Portal socket to this account's current source IPv4. On some
+    # campus networks both WANs share a gateway/subnet and SO_BINDTODEVICE
+    # returns ENETUNREACH even though source-address routing works correctly.
+    curl -sS --interface "$IP" --connect-timeout 5 --max-time "$timeout" "$@"
 }
 
 identity_matches() {
@@ -227,6 +228,14 @@ chmod 700 "$BASE"
 write_status starting
 
 while :; do
+    if [ -f "$BASE/reauth" ]; then
+        rm -f "$BASE/reauth"
+        if [ "$OWNED" -eq 1 ]; then
+            logout
+        else
+            reset_local authenticating '收到重新认证请求'
+        fi
+    fi
     if network_info; then
         if ! claim_identity; then
             reset_local identity_conflict

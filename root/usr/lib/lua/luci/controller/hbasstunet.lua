@@ -142,6 +142,31 @@ function status()
     http.write_json({ ok = true, accounts = accounts })
 end
 
+function reauth()
+    local section = http.formvalue("section") or ""
+    local token = http.formvalue("token") or ""
+    local result = { ok = false }
+    if http.getenv("REQUEST_METHOD") ~= "POST"
+        or token ~= dispatcher.context.authtoken
+        or not section:match("^[A-Za-z0-9_]+$") then
+        result.message = "重新认证请求无效"
+    elseif not uci:get("hbasstunet", section, ".type") then
+        result.message = "认证账户不存在"
+    else
+        local file = io.open("/var/run/hbasstunet/" .. section .. "/reauth", "w")
+        if file then
+            file:write(os.time())
+            file:close()
+            result.ok = true
+            result.message = "已请求重新认证"
+        else
+            result.message = "无法联系认证实例"
+        end
+    end
+    http.prepare_content("application/json")
+    http.write_json(result)
+end
+
 function index()
     entry({"admin", "network", "hbasstunet"}, cbi("hbasstunet"), _("hbasstuNet"), 60).dependent = false
     local page = entry({"admin", "network", "hbasstunet", "update"}, call("update"))
@@ -150,4 +175,7 @@ function index()
     local status_page = entry({"admin", "network", "hbasstunet", "status"}, call("status"))
     status_page.leaf = true
     status_page.dependent = true
+    local reauth_page = entry({"admin", "network", "hbasstunet", "reauth"}, call("reauth"))
+    reauth_page.leaf = true
+    reauth_page.dependent = true
 end

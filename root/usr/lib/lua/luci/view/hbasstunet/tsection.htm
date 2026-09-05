@@ -17,6 +17,7 @@
     </div>
     <% if self.addremove then %>
     <footer class="hbasstunet-card-footer">
+        <button type="button" class="btn cbi-button hbasstunet-card-reauth" data-section="<%=section%>"><%:重新认证%></button>
         <input type="submit" name="cbi.rts.<%=self.config%>.<%=section%>" onclick="this.form.cbi_state='del-section'; return true" value="<%:删除账号%>" class="btn cbi-button cbi-button-remove hbasstunet-card-delete" />
     </footer>
     <% end %>
@@ -45,6 +46,7 @@
 <script type="text/javascript">
 (function() {
     var endpoint = '<%=url("admin/network/hbasstunet/status")%>';
+    var reauthEndpoint = '<%=url("admin/network/hbasstunet/reauth")%>';
     var labels = {
         online: '<%:已认证%>', authenticating: '<%:认证中%>', waiting: '<%:等待接口%>',
         error: '<%:认证失败%>', identity_mismatch: '<%:身份不匹配%>', stopped: '<%:已停止%>',
@@ -76,6 +78,24 @@
             });
         });
     }
+    document.querySelectorAll('.hbasstunet-card-reauth').forEach(function(button) {
+        button.onclick = function() {
+            var section = button.getAttribute('data-section');
+            button.disabled = true;
+            XHR.post(reauthEndpoint, { section: section, token: '<%=token%>' }, function(_, data) {
+                button.disabled = false;
+                var card = document.getElementById('hbasstunet-card-' + section);
+                var box = card && card.querySelector('.hbasstunet-card-status');
+                if (box && data && data.ok) {
+                    box.textContent = '<%:已请求重新认证，请稍候...%>';
+                    box.setAttribute('data-state', 'authenticating');
+                } else if (box) {
+                    box.textContent = (data && data.message) || '<%:重新认证请求失败%>';
+                    box.setAttribute('data-state', 'error');
+                }
+            });
+        };
+    });
     refresh();
     window.setInterval(refresh, 10000);
 })();

@@ -26,7 +26,7 @@ class SourceContractTests(unittest.TestCase):
         backend = self.read("root/usr/sbin/hbasstunet")
         self.assertNotIn("hbasstunet.main.", backend)
         self.assertIn('BASE="/var/run/hbasstunet/$SECTION"', backend)
-        self.assertIn('curl -sS --interface "$DEVICE"', backend)
+        self.assertIn('curl -sS --interface "$IP"', backend)
         self.assertIn("claim_identity", backend)
         self.assertIn("SessionId", backend)
         for identity in ("Username", "UserIpv4", "UserMac"):
@@ -43,7 +43,9 @@ class SourceContractTests(unittest.TestCase):
         controller = self.read("root/usr/lib/lua/luci/controller/hbasstunet.lua")
         template = self.read("root/usr/lib/lua/luci/view/hbasstunet/tsection.htm")
         self.assertIn("function status()", controller)
+        self.assertIn("function reauth()", controller)
         self.assertIn("hbasstunet-card-delete", template)
+        self.assertIn("hbasstunet-card-reauth", template)
         self.assertIn("账号 #%", template)
         for field in ("operator", "message", "dial_code"):
             self.assertIn(field, template)

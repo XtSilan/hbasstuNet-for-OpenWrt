@@ -14,7 +14,7 @@ LuCI 可新增、删除和排序 hbasstunet 类型的 UCI section。每个 secti
 
 ## 网络身份隔离
 
-实例通过 ubus 将逻辑接口解析为实际 l3_device、IPv4 和 MAC，再用 curl --interface <l3_device> 固定 Portal 请求的物理出口。仅绑定源 IPv4 在两条 WAN 共用网段和网关时仍可能选中另一网卡，因此必须绑定实际设备；服务端响应还要匹配当前 IPv4/MAC。保护分三层：LuCI 阻止重复逻辑接口；procd 启动脚本复查 UCI；运行时按真实 MAC 加身份锁，防止不同逻辑接口落到同一设备身份。
+实例通过 ubus 将逻辑接口解析为实际 l3_device、IPv4 和 MAC，再用 curl --interface <IPv4> 固定 Portal 请求的源地址。两条 WAN 共用网段和网关时，curl 绑定物理设备可能因内核邻居/路由状态返回 ENETUNREACH，而源地址绑定可以正常到达门户；服务端响应仍必须匹配当前 IPv4/MAC，运行时 MAC 锁防止不同逻辑接口落到同一设备身份。
 
 登录和状态响应必须匹配配置账号、当前 IPv4、当前 MAC，并包含 SessionId。任一字段不匹配即视为串会话，只清除该实例的本地状态，不调用服务端登出，以免把另一账户踢下线。
 
