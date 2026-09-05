@@ -1,13 +1,24 @@
-<div class="cbi-section">
+<div class="cbi-section hbasstunet-update">
     <h3><%:软件更新%></h3>
     <p class="cbi-section-descr"><%:检查 GitHub 上的最新版本，查看提交说明并下载更新。%></p>
-    <div>
+    <div class="hbasstunet-update-actions">
         <button class="cbi-button cbi-button-apply" id="hbasstunet-update-check" type="button"><%:检查更新%></button>
         <button class="cbi-button cbi-button-positive" id="hbasstunet-update-install" type="button" disabled="disabled"><%:下载并更新%></button>
     </div>
-    <p id="hbasstunet-update-status" style="margin-top:1em;"></p>
-    <pre id="hbasstunet-update-notes" style="display:none; white-space:pre-wrap; max-height:20em; overflow:auto;"></pre>
+    <p id="hbasstunet-update-status"></p>
+    <pre id="hbasstunet-update-notes"></pre>
 </div>
+
+<style>
+.hbasstunet-update { box-sizing: border-box; margin-top: 1rem; padding: 1rem; }
+.hbasstunet-update-actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: .8rem; }
+#hbasstunet-update-status { margin: 1rem 0 0; }
+#hbasstunet-update-notes { display: none; box-sizing: border-box; max-height: 20em; margin: 1rem 0 0; padding: .75rem; overflow: auto; white-space: pre-wrap; }
+@media (max-width: 600px) {
+    .hbasstunet-update { padding: .75rem; }
+    .hbasstunet-update-actions .cbi-button { margin: 0; }
+}
+</style>
 
 <script type="text/javascript">
 (function() {

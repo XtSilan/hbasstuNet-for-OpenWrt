@@ -1,0 +1,82 @@
+<div class="cbi-section hbasstunet-accounts" id="cbi-<%=self.config%>-<%=self.sectiontype%>">
+<% if self.title and #self.title > 0 then %><h3><%=self.title%></h3><% end %>
+<% if self.description and #self.description > 0 then %><div class="cbi-section-descr"><%=self.description%></div><% end %>
+<% local isempty = true %>
+<% for index, account_section in ipairs(self:cfgsections()) do
+    isempty = false
+    section = account_section
+%>
+<article class="hbasstunet-card" id="hbasstunet-card-<%=section%>" data-section="<%=section%>">
+    <header class="hbasstunet-card-header">
+        <h3><%:账号 #%><%=index%></h3>
+        <span class="hbasstunet-card-section"><%=section%></span>
+    </header>
+    <div class="hbasstunet-card-status" data-status="loading"><%:正在读取连接状态...%></div>
+    <div class="hbasstunet-card-fields">
+        <% section = section; self:render_children(section, scope or {}) %>
+    </div>
+    <% if self.addremove then %>
+    <footer class="hbasstunet-card-footer">
+        <input type="submit" name="cbi.rts.<%=self.config%>.<%=section%>" onclick="this.form.cbi_state='del-section'; return true" value="<%:删除账号%>" class="btn cbi-button cbi-button-remove hbasstunet-card-delete" />
+    </footer>
+    <% end %>
+</article>
+<% end %>
+<% if isempty then %><em><%:暂未添加认证账号%></em><% end %>
+<% if self.addremove then %>
+<div class="cbi-section-create"><input class="btn cbi-button cbi-button-add" type="submit" name="cbi.cts.<%=self.config%>.<%=self.sectiontype%>.<%=section%>" value="<%:添加账号%>" /></div>
+<% end %>
+</div>
+
+<style>
+.hbasstunet-accounts { display: grid; gap: 1rem; }
+.hbasstunet-card { position: relative; border: 1px solid #c8c8c8; padding: 1rem; background: var(--cbi-bg, transparent); }
+.hbasstunet-card-header { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; border-bottom: 1px solid #ddd; margin-bottom: .75rem; }
+.hbasstunet-card-header h3 { margin: 0 0 .6rem; }
+.hbasstunet-card-section { color: #777; font-size: .85em; }
+.hbasstunet-card-status { margin: .5rem 0 1rem; padding: .55rem .7rem; border-left: 4px solid #999; background: rgba(127,127,127,.08); }
+.hbasstunet-card-status[data-state="online"] { border-left-color: #2e9d50; }
+.hbasstunet-card-status[data-state="error"], .hbasstunet-card-status[data-state="identity_mismatch"] { border-left-color: #d33; }
+.hbasstunet-card-status[data-state="authenticating"], .hbasstunet-card-status[data-state="waiting"] { border-left-color: #d99b22; }
+.hbasstunet-card-footer { display: flex; justify-content: flex-end; margin-top: 1rem; }
+.hbasstunet-card-delete { margin-left: auto; }
+</style>
+
+<script type="text/javascript">
+(function() {
+    var endpoint = '<%=url("admin/network/hbasstunet/status")%>';
+    var labels = {
+        online: '<%:已认证%>', authenticating: '<%:认证中%>', waiting: '<%:等待接口%>',
+        error: '<%:认证失败%>', identity_mismatch: '<%:身份不匹配%>', stopped: '<%:已停止%>',
+        starting: '<%:启动中%>', identity_conflict: '<%:接口身份冲突%>'
+    };
+    var operators = { cucc: '<%:中国联通%>', cmcc: '<%:中国移动%>', ctcc: '<%:中国电信%>' };
+    function esc(value) {
+        return String(value || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; });
+    }
+    function refresh() {
+        XHR.get(endpoint, {}, function(_, data) {
+            if (!data || !data.accounts) return;
+            data.accounts.forEach(function(item) {
+                var card = document.getElementById('hbasstunet-card-' + item.section);
+                if (!card) return;
+                var box = card.querySelector('.hbasstunet-card-status');
+                var state = item.state || 'stopped';
+                var title = labels[state] || state;
+                var details = [
+                    '<strong>' + esc(title) + '</strong>',
+                    '<span><%:接口%>: ' + esc(item.interface) + '</span>',
+                    item.ipv4 ? '<span><%:IPv4%>: ' + esc(item.ipv4) + '</span>' : '',
+                    item.operator ? '<span><%:运营商%>: ' + esc(operators[String(item.operator).toLowerCase()] || item.operator) + '</span>' : '',
+                    item.dial_code ? '<span><%:认证返回%>: ' + esc(item.dial_code) + '</span>' : '',
+                    item.message ? '<span>' + esc(item.message) + '</span>' : ''
+                ].filter(Boolean);
+                box.innerHTML = details.join(' &nbsp; ');
+                box.setAttribute('data-state', state);
+            });
+        });
+    }
+    refresh();
+    window.setInterval(refresh, 10000);
+})();
+</script>

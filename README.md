@@ -17,7 +17,7 @@
 - 认证失效后自动重新登录
 - 可在 LuCI 页面检查 GitHub Release、查看提交更新内容并校验下载安装 IPK
 - 每个账户由独立 procd 实例维护 Cookie、CSRF Token、SessionId、运行状态和日志标签
-- Portal 请求绑定到所选网络当前的源 IPv4，避免被 mwan3 分流到其他 WAN
+- Portal 请求绑定到所选网络的实际三层设备，并以该设备的 IPv4/MAC 校验身份，避免同网段双 WAN 或 mwan3 把认证流量送到另一条线
 - 校验服务端返回的账号、IPv4、MAC 和 SessionId，拒绝把其他账户的会话误判为成功
 - 由 procd 管理后台服务并支持异常拉起
 - 账号配置保存在独立 UCI 配置文件中
@@ -70,7 +70,7 @@ OpenWrt 可能同时存在 `lan`、`wan`、`wwan` 等多个逻辑网络。插件
 
 1. 通过 ubus 查询该网络当前使用的三层设备
 2. 读取校园网分配的 IPv4 地址和设备 MAC 地址
-3. 将 Portal 请求的源地址绑定为该 IPv4 发送
+3. 将 Portal 请求绑定到该网络的实际三层设备发送，并校验返回的 IPv4/MAC
 4. 在地址尚未获取时等待，而不是使用错误的出口反复认证
 
 这个选项填写的是 OpenWrt 的**逻辑网络名**，不是 `eth0`、`wlan0` 之类的 Linux 设备名。配置页会从 OpenWrt 的 UCI 网络配置读取已定义的逻辑网络，因此无需手工输入。

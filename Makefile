@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-hbasstunet
-PKG_VERSION:=$(if $(HBASSTUNET_VERSION),$(HBASSTUNET_VERSION),1.3.0)
+PKG_VERSION:=$(if $(HBASSTUNET_VERSION),$(HBASSTUNET_VERSION),1.3.1)
 PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
@@ -33,6 +33,7 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller $(1)/usr/lib/lua/luci/model/cbi $(1)/usr/lib/lua/luci/view/hbasstunet
 	$(INSTALL_DATA) ./root/usr/lib/lua/luci/controller/hbasstunet.lua $(1)/usr/lib/lua/luci/controller/hbasstunet.lua
 	$(INSTALL_DATA) ./root/usr/lib/lua/luci/model/cbi/hbasstunet.lua $(1)/usr/lib/lua/luci/model/cbi/hbasstunet.lua
+	$(INSTALL_DATA) ./root/usr/lib/lua/luci/view/hbasstunet/tsection.htm $(1)/usr/lib/lua/luci/view/hbasstunet/tsection.htm
 	$(INSTALL_DATA) ./root/usr/lib/lua/luci/view/hbasstunet/update.htm $(1)/usr/lib/lua/luci/view/hbasstunet/update.htm
 endef
 

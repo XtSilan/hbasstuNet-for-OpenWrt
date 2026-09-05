@@ -6,7 +6,7 @@ set -e
 
 # Use stable 24.10.0 release (produces IPK packages)
 export VERSION_PATH="${VERSION_PATH:-releases/24.10.0}"
-export HBASSTUNET_VERSION="${HBASSTUNET_VERSION:-1.3.0}"
+export HBASSTUNET_VERSION="${HBASSTUNET_VERSION:-1.3.1}"
 
 cd /builder
 

@@ -24,6 +24,9 @@ DEVICE=
 IP=
 MAC=
 RESPONSE_SESSION=
+OPERATOR=
+DIAL_CODE=
+LAST_MESSAGE=''
 
 get() { uci -q get "hbasstunet.$SECTION.$1" 2>/dev/null || true; }
 log() { logger -t "$TAG" -- "$*"; }
@@ -33,16 +36,22 @@ normalize_mac() { printf %s "$1" | tr 'A-Z' 'a-z' | tr -d ':-'; }
 normalize_user() { printf %s "$1" | tr 'A-Z' 'a-z'; }
 
 write_status() {
-    printf 'state=%s\ninterface=%s\ndevice=%s\nipv4=%s\nmac=%s\n' \
-        "$1" "$(get interface)" "$DEVICE" "$IP" "$MAC" > "$STATUS_FILE"
+    local message
+    message=$(printf %s "$LAST_MESSAGE" | tr '\r\n' '  ')
+    printf 'state=%s\ninterface=%s\ndevice=%s\nipv4=%s\nmac=%s\noperator=%s\ndial_code=%s\nmessage=%s\n' \
+        "$1" "$(get interface)" "$DEVICE" "$IP" "$MAC" "$OPERATOR" "$DIAL_CODE" "$message" > "$STATUS_FILE"
     chmod 600 "$STATUS_FILE"
 }
 
 reset_local() {
+    local state="$1"
     ACTIVE=0
     OWNED=0
+    OPERATOR=
+    DIAL_CODE=
+    [ "$#" -ge 2 ] && LAST_MESSAGE="$2"
     rm -f "$COOKIE" "$CSRF_FILE" "$ISP_FILE" "$SESSION_FILE" "$BASE/csrf.json"
-    write_status "$1"
+    write_status "$state"
 }
 
 release_identity_lock() {
@@ -103,9 +112,9 @@ network_info() {
 curl_bound() {
     local timeout="$1"
     shift
-    # Bind the Portal socket to this account's current source IPv4.  The
-    # device/MAC is still tracked separately for identity validation.
-    curl -sS --interface "$IP" --connect-timeout 5 --max-time "$timeout" "$@"
+    # Bind to the concrete L3 device. This is required when two WANs share a
+    # gateway/subnet; source-IP binding alone can still select the other NIC.
+    curl -sS --interface "$DEVICE" --connect-timeout 5 --max-time "$timeout" "$@"
 }
 
 identity_matches() {
@@ -125,14 +134,14 @@ identity_matches() {
 logout() {
     local isp csrf
     if [ "$OWNED" -ne 1 ] || [ ! -s "$COOKIE" ]; then
-        reset_local stopped
+        reset_local stopped '认证实例已停止'
         return 0
     fi
     isp=$(cat "$ISP_FILE" 2>/dev/null || true)
     csrf=$(cat "$CSRF_FILE" 2>/dev/null || true)
     curl_bound 10 -b "$COOKIE" -H "X-CSRF-Token: $csrf" -H 'X-Requested-With: XMLHttpRequest' \
         -o /dev/null "$(portal)/api/account/logout?nasId=$(get nas_id)&userIpv4=$IP&userMac=$MAC&username=$(get username)&isp=$isp" || true
-    reset_local stopped
+    reset_local stopped '已注销校园网会话'
 }
 
 cleanup() {
@@ -146,13 +155,13 @@ trap cleanup EXIT
 authenticate() {
     local url csrf body code auth dial msg isp
     url=$(portal)
-    [ -n "$url" ] || { err '门户地址为空'; reset_local error; return 1; }
-    [ -n "$(get username)" ] && [ -n "$(get password)" ] || { err '账号或密码为空'; reset_local error; return 1; }
-    reset_local authenticating
+    [ -n "$url" ] || { err '门户地址为空'; reset_local error '门户地址为空'; return 1; }
+    [ -n "$(get username)" ] && [ -n "$(get password)" ] || { err '账号或密码为空'; reset_local error '账号或密码为空'; return 1; }
+    reset_local authenticating '正在连接校园网门户'
 
-    curl_bound 10 -c "$COOKIE" -o "$BASE/csrf.json" "$url/api/csrf-token" || { err '获取 CSRF token 失败'; reset_local error; return 1; }
+    curl_bound 10 -c "$COOKIE" -o "$BASE/csrf.json" "$url/api/csrf-token" || { err '获取 CSRF token 失败'; reset_local error '获取 CSRF token 失败'; return 1; }
     csrf=$(jsonfilter -i "$BASE/csrf.json" -e '@.csrf_token' 2>/dev/null || true)
-    [ -n "$csrf" ] || { err 'CSRF token 为空'; reset_local error; return 1; }
+    [ -n "$csrf" ] || { err 'CSRF token 为空'; reset_local error 'CSRF token 为空'; return 1; }
     printf %s "$csrf" > "$CSRF_FILE"
     chmod 600 "$COOKIE" "$CSRF_FILE"
 
@@ -162,7 +171,7 @@ authenticate() {
         --data-urlencode "username=$(get username)" --data-urlencode "password=$(get password)" \
         "$url/api/account/check" || true)
     code=$(printf %s "$body" | jsonfilter -e '@.code' 2>/dev/null || true)
-    [ "$code" = 0 ] || { err '账号检查失败'; reset_local error; return 1; }
+    [ "$code" = 0 ] || { err '账号检查失败'; reset_local error '账号检查失败'; return 1; }
 
     body=$(curl_bound 20 -b "$COOKIE" -H "X-CSRF-Token: $csrf" -H 'X-Requested-With: XMLHttpRequest' \
         -H 'Content-Type: application/x-www-form-urlencoded' --data-urlencode "nasId=$(get nas_id)" \
@@ -172,18 +181,18 @@ authenticate() {
     code=$(printf %s "$body" | jsonfilter -e '@.code' 2>/dev/null || true)
     auth=$(printf %s "$body" | jsonfilter -e '@.authCode' 2>/dev/null || true)
     dial=$(printf %s "$body" | jsonfilter -e '@.dialCode' 2>/dev/null || true)
-    if [ "$code" != 0 ] || ! printf %s "$auth" | grep -qi '^ok:' || printf %s "$dial" | grep -q '^E'; then
+    if [ "$code" != 0 ] || { [ -n "$auth" ] && ! printf %s "$auth" | grep -qi '^ok:'; } || printf %s "$dial" | grep -q '^E'; then
         msg=$(printf %s "$body" | jsonfilter -e '@.dialMsg' 2>/dev/null || true)
         [ -n "$msg" ] || msg=$(printf %s "$body" | jsonfilter -e '@.authMsg' 2>/dev/null || true)
         [ -n "$msg" ] || msg='认证未成功'
         err "登录失败: $msg"
-        reset_local error
+        reset_local error '登录失败，请查看系统日志'
         return 1
     fi
 
     if ! identity_matches "$body"; then
         err '服务端返回的账号、IPv4、MAC 或 SessionId 与本实例不符；拒绝接管该会话'
-        reset_local identity_mismatch
+        reset_local identity_mismatch '服务端返回了其他网络身份，已拒绝接管'
         return 1
     fi
 
@@ -191,6 +200,9 @@ authenticate() {
     printf %s "$isp" > "$ISP_FILE"
     printf %s "$RESPONSE_SESSION" > "$SESSION_FILE"
     chmod 600 "$ISP_FILE" "$SESSION_FILE"
+    OPERATOR=$isp
+    DIAL_CODE=$dial
+    LAST_MESSAGE='认证成功'
     ACTIVE=1
     OWNED=1
     write_status online
@@ -224,7 +236,7 @@ while :; do
         if [ "$ACTIVE" -eq 1 ]; then
             if ! session_ok; then
                 err '认证状态无效或返回身份不匹配，丢弃本地会话并重新登录'
-                reset_local identity_mismatch
+                reset_local identity_mismatch '认证状态无效或返回身份不匹配'
                 authenticate || true
             fi
         else
@@ -232,7 +244,8 @@ while :; do
         fi
     else
         release_identity_lock
-        [ "$ACTIVE" -eq 0 ] || reset_local waiting
+        [ "$ACTIVE" -eq 0 ] || reset_local waiting '所选接口暂时没有 IPv4 地址'
+        LAST_MESSAGE='等待所选接口获取 IPv4 地址'
         write_status waiting
         log "等待实例 $SECTION 所选接口获取 IPv4 地址"
     fi

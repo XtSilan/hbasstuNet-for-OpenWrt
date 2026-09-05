@@ -8,6 +8,7 @@ s = m:section(TypedSection, "hbasstunet", translate("认证账户"))
 s.anonymous = true
 s.addremove = true
 s.sortable = true
+s.template = "hbasstunet/tsection"
 
 e = s:option(Flag, "enabled", translate("启用"))
 e.default = "0"

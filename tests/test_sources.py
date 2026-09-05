@@ -26,7 +26,7 @@ class SourceContractTests(unittest.TestCase):
         backend = self.read("root/usr/sbin/hbasstunet")
         self.assertNotIn("hbasstunet.main.", backend)
         self.assertIn('BASE="/var/run/hbasstunet/$SECTION"', backend)
-        self.assertIn('curl -sS --interface "$IP"', backend)
+        self.assertIn('curl -sS --interface "$DEVICE"', backend)
         self.assertIn("claim_identity", backend)
         self.assertIn("SessionId", backend)
         for identity in ("Username", "UserIpv4", "UserMac"):
@@ -37,6 +37,22 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn('TypedSection, "hbasstunet"', luci)
         self.assertIn("s.addremove = true", luci)
         self.assertIn("function i.validate", luci)
+        self.assertIn('s.template = "hbasstunet/tsection"', luci)
+
+    def test_status_cards_expose_runtime_information(self):
+        controller = self.read("root/usr/lib/lua/luci/controller/hbasstunet.lua")
+        template = self.read("root/usr/lib/lua/luci/view/hbasstunet/tsection.htm")
+        self.assertIn("function status()", controller)
+        self.assertIn("hbasstunet-card-delete", template)
+        self.assertIn("账号 #%", template)
+        for field in ("operator", "message", "dial_code"):
+            self.assertIn(field, template)
+
+    def test_update_panel_has_spacing_and_button_layout(self):
+        template = self.read("root/usr/lib/lua/luci/view/hbasstunet/update.htm")
+        self.assertIn("hbasstunet-update-actions", template)
+        self.assertIn("padding: 1rem", template)
+        self.assertIn("gap: .6rem", template)
 
     def test_credentials_and_outputs_are_ignored(self):
         ignore = self.read(".gitignore")

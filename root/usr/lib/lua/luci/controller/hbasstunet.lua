@@ -4,6 +4,7 @@ local http = require "luci.http"
 local util = require "luci.util"
 local jsonc = require "luci.jsonc"
 local dispatcher = require "luci.dispatcher"
+local uci = require "luci.model.uci".cursor()
 
 local RELEASE_API = "https://api.github.com/repos/XtSilan/hbasstuNet-for-OpenWrt/releases/latest"
 
@@ -111,9 +112,42 @@ function update()
     http.write_json(result)
 end
 
+local function read_instance_status(section)
+    local result = { state = "stopped" }
+    if not tostring(section):match("^[A-Za-z0-9_]+$") then
+        return result
+    end
+    local file = io.open("/var/run/hbasstunet/" .. section .. "/status", "r")
+    if not file then
+        return result
+    end
+    for line in file:lines() do
+        local key, value = line:match("^([a-z_]+)=(.*)$")
+        if key then result[key] = value end
+    end
+    file:close()
+    return result
+end
+
+function status()
+    local accounts = {}
+    uci:foreach("hbasstunet", "hbasstunet", function(account)
+        local item = read_instance_status(account[".name"])
+        item.section = account[".name"]
+        item.enabled = account.enabled == "1"
+        item.interface = account.interface or item.interface or ""
+        accounts[#accounts + 1] = item
+    end)
+    http.prepare_content("application/json")
+    http.write_json({ ok = true, accounts = accounts })
+end
+
 function index()
     entry({"admin", "network", "hbasstunet"}, cbi("hbasstunet"), _("hbasstuNet"), 60).dependent = false
     local page = entry({"admin", "network", "hbasstunet", "update"}, call("update"))
     page.leaf = true
     page.dependent = true
+    local status_page = entry({"admin", "network", "hbasstunet", "status"}, call("status"))
+    status_page.leaf = true
+    status_page.dependent = true
 end
