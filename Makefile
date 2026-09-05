@@ -11,7 +11,7 @@ define Package/$(PKG_NAME)
   CATEGORY:=LuCI
   SUBMENU:=Applications
   TITLE:=hbasstuNet campus network login
-  DEPENDS:=+luci-base +luci-lib-jsonc +curl +ca-bundle +jsonfilter
+  DEPENDS:=+luci-base +luci-lib-jsonc +curl +ca-bundle +jsonfilter +ip-full
 endef
 
 define Package/$(PKG_NAME)/description

@@ -31,6 +31,32 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("SessionId", backend)
         for identity in ("Username", "UserIpv4", "UserMac"):
             self.assertIn(identity, backend)
+        self.assertIn("response_message", backend)
+        self.assertIn('reset_local error "$msg"', backend)
+
+    def test_backend_installs_source_policy_route_and_cleans_it(self):
+        backend = self.read("root/usr/sbin/hbasstunet")
+        self.assertIn("policy_route_setup", backend)
+        self.assertIn("policy_route_clear", backend)
+        self.assertIn('ip -4 rule add pref "$ROUTE_RULE_PREF" from "$IP/32" lookup "$ROUTE_TABLE"', backend)
+        self.assertIn('ip -4 rule del pref "$1" from "$2/32" lookup "$3"', backend)
+        self.assertIn('if ($i == "iif" && $(i + 1) == dev)', backend)
+        self.assertIn('route[0].nexthop', backend)
+        self.assertIn('alphabet = "_0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"', backend)
+        self.assertNotIn('| cksum', backend)
+        self.assertIn("stale_policy_clear", backend)
+        self.assertIn("policy_state_write", backend)
+        self.assertIn("table_has_default", backend)
+        self.assertIn("policy_rule_delete", backend)
+        self.assertIn('from "$2/32" lookup "$3"', backend)
+        self.assertIn('ROUTE_GATEWAY', backend)
+        self.assertIn('"$GATEWAY/32" dev "$DEVICE" scope link', backend)
+        self.assertIn('ROUTE_GATEWAY=', backend)
+        self.assertLess(backend.index('stale_policy_clear || exit 1'), backend.index("trap cleanup EXIT"))
+
+    def test_package_installs_full_iproute_support(self):
+        makefile = self.read("Makefile")
+        self.assertIn("+ip-full", makefile)
 
     def test_luci_supports_add_remove_and_interface_validation(self):
         luci = self.read("root/usr/lib/lua/luci/model/cbi/hbasstunet.lua")
@@ -38,6 +64,7 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("s.addremove = true", luci)
         self.assertIn("function i.validate", luci)
         self.assertIn('s.template = "hbasstunet/tsection"', luci)
+        self.assertIn("绑定其源 IPv4", luci)
 
     def test_status_cards_expose_runtime_information(self):
         controller = self.read("root/usr/lib/lua/luci/controller/hbasstunet.lua")
@@ -49,6 +76,11 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("账号 #%", template)
         for field in ("operator", "message", "dial_code"):
             self.assertIn(field, template)
+
+    def test_reauth_supports_anonymous_uci_sections(self):
+        controller = self.read("root/usr/lib/lua/luci/controller/hbasstunet.lua")
+        self.assertIn('uci:get_all("hbasstunet", section)', controller)
+        self.assertIn('account[".type"] ~= "hbasstunet"', controller)
 
     def test_update_panel_has_spacing_and_button_layout(self):
         template = self.read("root/usr/lib/lua/luci/view/hbasstunet/update.htm")

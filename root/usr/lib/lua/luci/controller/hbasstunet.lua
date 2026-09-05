@@ -150,17 +150,20 @@ function reauth()
         or token ~= dispatcher.context.authtoken
         or not section:match("^[A-Za-z0-9_]+$") then
         result.message = "重新认证请求无效"
-    elseif not uci:get("hbasstunet", section, ".type") then
-        result.message = "认证账户不存在"
     else
-        local file = io.open("/var/run/hbasstunet/" .. section .. "/reauth", "w")
-        if file then
-            file:write(os.time())
-            file:close()
-            result.ok = true
-            result.message = "已请求重新认证"
+        local account = uci:get_all("hbasstunet", section)
+        if not account or account[".type"] ~= "hbasstunet" then
+            result.message = "认证账户不存在"
         else
-            result.message = "无法联系认证实例"
+            local file = io.open("/var/run/hbasstunet/" .. section .. "/reauth", "w")
+            if file then
+                file:write(os.time())
+                file:close()
+                result.ok = true
+                result.message = "已请求重新认证"
+            else
+                result.message = "无法联系认证实例"
+            end
         end
     end
     http.prepare_content("application/json")

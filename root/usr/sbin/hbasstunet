@@ -17,6 +17,7 @@ CSRF_FILE="$BASE/csrf"
 ISP_FILE="$BASE/isp"
 SESSION_FILE="$BASE/session_id"
 STATUS_FILE="$BASE/status"
+ROUTE_STATE_FILE="$BASE/route_policy"
 IDENTITY_LOCK=
 ACTIVE=0
 OWNED=0
@@ -27,6 +28,11 @@ RESPONSE_SESSION=
 OPERATOR=
 DIAL_CODE=
 LAST_MESSAGE=''
+ROUTE_TABLE=
+ROUTE_RULE_PREF=
+OWN_ROUTE_TABLE=0
+GATEWAY=
+ROUTE_GATEWAY=
 
 get() { uci -q get "hbasstunet.$SECTION.$1" 2>/dev/null || true; }
 log() { logger -t "$TAG" -- "$*"; }
@@ -52,6 +58,146 @@ reset_local() {
     [ "$#" -ge 2 ] && LAST_MESSAGE="$2"
     rm -f "$COOKIE" "$CSRF_FILE" "$ISP_FILE" "$SESSION_FILE" "$BASE/csrf.json"
     write_status "$state"
+}
+
+route_rule_pref() {
+    local seed candidate attempt=0
+    seed=$(awk -v section="$SECTION" 'BEGIN {
+        alphabet = "_0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+        value = 0
+        for (i = 1; i <= length(section); i++)
+            value = (value * 33 + index(alphabet, substr(section, i, 1))) % 2147483647
+        print value
+    }')
+    candidate=$((1100 + seed % 800))
+    while [ "$attempt" -lt 800 ]; do
+        if ! ip -4 rule show 2>/dev/null | grep -q "^$candidate:" \
+            && ! ip -4 route show table $((10000 + candidate)) 2>/dev/null | grep -q .; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+        candidate=$((1100 + (candidate - 1099) % 800))
+        attempt=$((attempt + 1))
+    done
+    return 1
+}
+
+policy_rule_exists() {
+    ip -4 rule show 2>/dev/null | awk -v pref="$1:" -v source="$2" -v table="$3" '
+        $1 == pref && $2 == "from" && ($3 == source || $3 == source "/32") && $4 == "lookup" && $5 == table { found = 1 }
+        END { exit !found }'
+}
+
+policy_rule_delete() {
+    ip -4 rule del pref "$1" from "$2/32" lookup "$3" 2>/dev/null \
+        || ip -4 rule del pref "$1" from "$2" lookup "$3" 2>/dev/null \
+        || true
+}
+
+policy_state_write() {
+    printf 'pid=%s\npref=%s\ntable=%s\nsource=%s\nowned=%s\n' \
+        "$$" "$ROUTE_RULE_PREF" "$ROUTE_TABLE" "$IP" "$OWN_ROUTE_TABLE" > "$ROUTE_STATE_FILE"
+    chmod 600 "$ROUTE_STATE_FILE"
+}
+
+stale_policy_clear() {
+    local old_pid old_pref old_table old_source old_owned
+    [ -s "$ROUTE_STATE_FILE" ] || return 0
+    old_pid=$(sed -n 's/^pid=//p' "$ROUTE_STATE_FILE" | head -n 1)
+    old_pref=$(sed -n 's/^pref=//p' "$ROUTE_STATE_FILE" | head -n 1)
+    old_table=$(sed -n 's/^table=//p' "$ROUTE_STATE_FILE" | head -n 1)
+    old_source=$(sed -n 's/^source=//p' "$ROUTE_STATE_FILE" | head -n 1)
+    old_owned=$(sed -n 's/^owned=//p' "$ROUTE_STATE_FILE" | head -n 1)
+    if [ -n "$old_pid" ] && [ "$old_pid" != "$$" ] && kill -0 "$old_pid" 2>/dev/null; then
+        case "$(tr '\000' ' ' < "/proc/$old_pid/cmdline" 2>/dev/null || true)" in
+            *"/usr/sbin/hbasstunet $SECTION "*)
+                err "认证实例已在运行 pid=$old_pid"
+                return 1
+                ;;
+        esac
+    fi
+    if [ -n "$old_pref" ] && [ -n "$old_source" ] && [ -n "$old_table" ] \
+        && policy_rule_exists "$old_pref" "$old_source" "$old_table"; then
+        policy_rule_delete "$old_pref" "$old_source" "$old_table"
+    fi
+    case "$old_owned:$old_table" in
+        1:11[1-8][0-9][0-9]) ip -4 route flush table "$old_table" 2>/dev/null || true ;;
+    esac
+    rm -f "$ROUTE_STATE_FILE"
+}
+
+policy_route_clear() {
+    if [ -n "$ROUTE_RULE_PREF" ] && policy_rule_exists "$ROUTE_RULE_PREF" "$IP" "$ROUTE_TABLE"; then
+        policy_rule_delete "$ROUTE_RULE_PREF" "$IP" "$ROUTE_TABLE"
+    fi
+    if [ "$OWN_ROUTE_TABLE" -eq 1 ] && [ -n "$ROUTE_TABLE" ]; then
+        ip -4 route flush table "$ROUTE_TABLE" 2>/dev/null || true
+    fi
+    ROUTE_TABLE=
+    ROUTE_RULE_PREF=
+    OWN_ROUTE_TABLE=0
+    ROUTE_GATEWAY=
+    rm -f "$ROUTE_STATE_FILE"
+}
+
+table_has_default() {
+    ip -4 route show table "$1" 2>/dev/null | awk -v dev="$DEVICE" '$1 == "default" { for (i = 1; i <= NF; i++) if ($i == "dev" && $(i + 1) == dev) { found = 1 } } END { exit !found }'
+}
+
+find_route_table() {
+    local table candidate
+    candidate=$(ip -4 rule show 2>/dev/null | awk -v dev="$DEVICE" '{ for (i = 1; i <= NF; i++) if ($i == "iif" && $(i + 1) == dev) { for (j = i + 2; j <= NF; j++) if ($j == "lookup" && $(j + 1) ~ /^[0-9]+$/) { print $(j + 1); exit } } }' | head -n 1)
+    [ -z "$candidate" ] || ! table_has_default "$candidate" || table=$candidate
+    [ -n "$table" ] || table=$(ip -4 route show table all 2>/dev/null | awk -v dev="$DEVICE" '$1 == "default" && $0 ~ ("dev " dev) { for (i = 1; i <= NF; i++) if ($i == "table" && $(i + 1) ~ /^[0-9]+$/) { print $(i + 1); exit } }')
+    printf '%s' "$table"
+}
+
+policy_route_setup() {
+    local table owned=0
+    [ -n "$IP" ] && [ -n "$DEVICE" ] || return 1
+    if [ "$OWN_ROUTE_TABLE" -eq 1 ] && [ -n "$ROUTE_TABLE" ]; then
+        table=$ROUTE_TABLE
+        owned=1
+        table_has_default "$table" || ROUTE_GATEWAY=
+    else
+        table=$(find_route_table)
+    fi
+    if [ -z "$table" ]; then
+        [ -n "$GATEWAY" ] || return 1
+        [ -n "$ROUTE_RULE_PREF" ] || ROUTE_RULE_PREF=$(route_rule_pref) || return 1
+        table=$((10000 + ROUTE_RULE_PREF))
+        owned=1
+    fi
+    if [ -n "$ROUTE_TABLE" ] && [ "$ROUTE_TABLE" != "$table" ]; then
+        policy_route_clear
+    elif [ "$ROUTE_TABLE" = "$table" ]; then
+        owned=$OWN_ROUTE_TABLE
+    fi
+    ROUTE_TABLE=$table
+    OWN_ROUTE_TABLE=$owned
+    if [ "$OWN_ROUTE_TABLE" -eq 1 ] && [ "$ROUTE_GATEWAY" != "$GATEWAY" ]; then
+        [ -n "$GATEWAY" ] || return 1
+        ip -4 route flush table "$ROUTE_TABLE" 2>/dev/null || true
+        ip -4 route replace table "$ROUTE_TABLE" "$GATEWAY/32" dev "$DEVICE" scope link src "$IP" 2>/dev/null || return 1
+        if ! ip -4 route replace table "$ROUTE_TABLE" default via "$GATEWAY" dev "$DEVICE" src "$IP" 2>/dev/null; then
+            ip -4 route flush table "$ROUTE_TABLE" 2>/dev/null || true
+            return 1
+        fi
+        ROUTE_GATEWAY=$GATEWAY
+    fi
+    [ -n "$ROUTE_RULE_PREF" ] || ROUTE_RULE_PREF=$(route_rule_pref) || return 1
+    if policy_rule_exists "$ROUTE_RULE_PREF" "$IP" "$ROUTE_TABLE"; then
+        policy_state_write
+        return 0
+    fi
+    if ! ip -4 rule add pref "$ROUTE_RULE_PREF" from "$IP/32" lookup "$ROUTE_TABLE" 2>/dev/null; then
+        if [ "$OWN_ROUTE_TABLE" -eq 1 ]; then
+            ip -4 route flush table "$ROUTE_TABLE" 2>/dev/null || true
+            ROUTE_GATEWAY=
+        fi
+        return 1
+    fi
+    policy_state_write
 }
 
 release_identity_lock() {
@@ -86,17 +232,26 @@ claim_identity() {
 }
 
 network_info() {
-    local name json next_device next_ip next_mac
+    local name json next_device next_ip next_mac next_gateway identity_changed=0
     name=$(get interface)
     [ -n "$name" ] || name=wan
     json=$(ubus call "network.interface.$name" status 2>/dev/null || true)
     next_device=$(printf %s "$json" | jsonfilter -e '@.l3_device' 2>/dev/null || true)
     next_ip=$(printf %s "$json" | jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null || true)
+    next_gateway=$(printf %s "$json" | jsonfilter -e '@.route[@.target="0.0.0.0"].nexthop' 2>/dev/null | head -n 1 || true)
+    [ -n "$next_gateway" ] || next_gateway=$(printf %s "$json" | jsonfilter -e '@.route[0].nexthop' 2>/dev/null || true)
+    [ -n "$next_gateway" ] || next_gateway=$(ip -4 route show default dev "$next_device" 2>/dev/null | awk '/via/ { print $3; exit }')
     [ -n "$next_device" ] && [ -n "$next_ip" ] || return 1
     next_mac=$(cat "/sys/class/net/$next_device/address" 2>/dev/null || true)
     [ -n "$next_mac" ] || return 1
 
-    if [ "$OWNED" -eq 1 ] && { [ "$DEVICE" != "$next_device" ] || [ "$IP" != "$next_ip" ] || [ "$(normalize_mac "$MAC")" != "$(normalize_mac "$next_mac")" ]; }; then
+    [ -n "$IP" ] && [ "$IP" != "$next_ip" ] && identity_changed=1
+    [ -n "$DEVICE" ] && [ "$DEVICE" != "$next_device" ] && identity_changed=1
+    [ -n "$MAC" ] && [ "$(normalize_mac "$MAC")" != "$(normalize_mac "$next_mac")" ] && identity_changed=1
+    if [ "$identity_changed" -eq 1 ]; then
+        policy_route_clear
+    fi
+    if [ "$OWNED" -eq 1 ] && [ "$identity_changed" -eq 1 ]; then
         log '接口身份已变化，丢弃旧会话状态并重新认证'
         DEVICE=$next_device
         IP=$next_ip
@@ -107,6 +262,7 @@ network_info() {
         IP=$next_ip
         MAC=$next_mac
     fi
+    GATEWAY=$next_gateway
 }
 
 curl_bound() {
@@ -147,11 +303,18 @@ logout() {
 
 cleanup() {
     logout
+    policy_route_clear
     release_identity_lock
     rm -rf "$BASE"
 }
-trap 'exit 0' INT TERM
-trap cleanup EXIT
+response_message() {
+    local body="$1" message
+    for field in message msg dialMsg authMsg; do
+        message=$(printf %s "$body" | jsonfilter -e "@.$field" 2>/dev/null || true)
+        [ -z "$message" ] || { printf %s "$message"; return 0; }
+    done
+    return 1
+}
 
 authenticate() {
     local url csrf body code auth dial msg isp
@@ -172,7 +335,13 @@ authenticate() {
         --data-urlencode "username=$(get username)" --data-urlencode "password=$(get password)" \
         "$url/api/account/check" || true)
     code=$(printf %s "$body" | jsonfilter -e '@.code' 2>/dev/null || true)
-    [ "$code" = 0 ] || { err '账号检查失败'; reset_local error '账号检查失败'; return 1; }
+    if [ "$code" != 0 ]; then
+        msg=$(response_message "$body" || true)
+        [ -n "$msg" ] || msg='账号检查失败'
+        err "账号检查失败: $msg"
+        reset_local error "$msg"
+        return 1
+    fi
 
     body=$(curl_bound 20 -b "$COOKIE" -H "X-CSRF-Token: $csrf" -H 'X-Requested-With: XMLHttpRequest' \
         -H 'Content-Type: application/x-www-form-urlencoded' --data-urlencode "nasId=$(get nas_id)" \
@@ -183,11 +352,10 @@ authenticate() {
     auth=$(printf %s "$body" | jsonfilter -e '@.authCode' 2>/dev/null || true)
     dial=$(printf %s "$body" | jsonfilter -e '@.dialCode' 2>/dev/null || true)
     if [ "$code" != 0 ] || { [ -n "$auth" ] && ! printf %s "$auth" | grep -qi '^ok:'; } || printf %s "$dial" | grep -q '^E'; then
-        msg=$(printf %s "$body" | jsonfilter -e '@.dialMsg' 2>/dev/null || true)
-        [ -n "$msg" ] || msg=$(printf %s "$body" | jsonfilter -e '@.authMsg' 2>/dev/null || true)
+        msg=$(response_message "$body" || true)
         [ -n "$msg" ] || msg='认证未成功'
         err "登录失败: $msg"
-        reset_local error '登录失败，请查看系统日志'
+        reset_local error "$msg"
         return 1
     fi
 
@@ -225,6 +393,9 @@ session_ok() {
 
 mkdir -p "$BASE"
 chmod 700 "$BASE"
+stale_policy_clear || exit 1
+trap 'exit 0' INT TERM
+trap cleanup EXIT
 write_status starting
 
 while :; do
@@ -242,6 +413,12 @@ while :; do
             sleep 30
             continue
         fi
+        if ! policy_route_setup; then
+            err '无法建立源地址策略路由'
+            reset_local error '无法建立源地址策略路由'
+            sleep 30
+            continue
+        fi
         if [ "$ACTIVE" -eq 1 ]; then
             if ! session_ok; then
                 err '认证状态无效或返回身份不匹配，丢弃本地会话并重新登录'
@@ -252,6 +429,7 @@ while :; do
             authenticate || true
         fi
     else
+        policy_route_clear
         release_identity_lock
         [ "$ACTIVE" -eq 0 ] || reset_local waiting '所选接口暂时没有 IPv4 地址'
         LAST_MESSAGE='等待所选接口获取 IPv4 地址'

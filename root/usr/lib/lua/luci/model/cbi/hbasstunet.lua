@@ -31,7 +31,7 @@ r.rmempty = false
 i = s:option(ListValue, "interface", translate("校园网接口"))
 i.default = "wan"
 i.rmempty = false
-i.description = translate("选择该账户专用的 OpenWrt 逻辑网络；认证请求会强制绑定该网络的三层设备和 IPv4 地址。")
+i.description = translate("选择该账户专用的 OpenWrt 逻辑网络；插件会绑定其源 IPv4，并让认证请求使用该接口对应的路由表。")
 uci:foreach("network", "interface", function(iface)
     local name = iface[".name"]
     if name and name ~= "loopback" then
